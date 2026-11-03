@@ -1,8 +1,35 @@
-# urloot
+<h1 align="center">
+  <br>
+  <a href="https://github.com/aktezed/urloot"><img src="static/urloot-logo.svg" width="220px" alt="urloot"></a>
+  <br>
+  urloot
+  <br>
+</h1>
 
-`urloot` (URL + Loot) is a standalone Go CLI tool and SDK for passive archive harvesting, active web crawling, heuristic URL normalization, and persistent SQLite endpoint diffing.
+<h4 align="center">Passive & active URL harvester, heuristic normalizer, and SQLite endpoint differ</h4>
 
-Built as the endpoint-level companion to `assfin`, `urloot` replaces fragile shell pipelines (`katana | gau | uro`) and Python runtime dependencies with a single CGO-free binary that tracks newly surfaced routes and query parameters across time.
+<p align="center">
+<a href="https://github.com/aktezed/urloot/releases"><img src="https://img.shields.io/github/release/aktezed/urloot.svg"></a>
+<a href="https://goreportcard.com/report/github.com/aktezed/urloot"><img src="https://goreportcard.com/badge/github.com/aktezed/urloot"></a>
+<a href="https://pkg.go.dev/github.com/aktezed/urloot"><img src="https://pkg.go.dev/badge/github.com/aktezed/urloot.svg"></a>
+<a href="https://github.com/aktezed/urloot/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+</p>
+
+<p align="center">
+  <a href="#features">Features</a> •
+  <a href="#installation">Installation</a> •
+  <a href="#usage-examples">Usage</a> •
+  <a href="#cli-flags">CLI Flags</a> •
+  <a href="#license">License</a>
+</p>
+
+---
+
+**urloot** (URL + Loot) is a standalone Go CLI tool and SDK for passive archive harvesting, active web crawling, heuristic URL normalization, and persistent SQLite endpoint diffing.
+
+Built as the endpoint-level companion to [assfin](https://github.com/aktezed/assfin), `urloot` replaces fragile shell pipelines (`katana | gau | uro`) and Python runtime dependencies with a single CGO-free binary that tracks newly surfaced routes and query parameters across time.
+
+---
 
 ## Features
 
@@ -26,7 +53,7 @@ Built as the endpoint-level companion to `assfin`, `urloot` replaces fragile she
 ## Installation
 
 ```bash
-CGO_ENABLED=0 go install github.com/aktezed/urloot/cmd/urloot@latest
+go install github.com/aktezed/urloot@latest
 ```
 
 Or build from source:
