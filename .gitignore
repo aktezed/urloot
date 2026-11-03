@@ -1,0 +1,40 @@
+# Binaries
+/urloot
+bin/
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binaries and coverage
+*.test
+*.out
+coverage.out
+coverage.html
+
+# SQLite database files
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Architecture & Internal Docs
+ARCHITECTURE.md
+Architecture.md
+architecture.md
+
+# Local configs
+.urloot-config.yaml
+
+# Go workspace & modules
+vendor/
+go.work.sum
+
+# IDE & OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
