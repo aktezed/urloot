@@ -6,7 +6,7 @@
   <br>
 </h1>
 
-<h4 align="center">Passive and active URL harvester, normalizer, and SQLite endpoint differ</h4>
+<h4 align="center">Endpoint and parameter recon in one binary</h4>
 
 <p align="center">
 <a href="https://github.com/aktezed/urloot/releases"><img src="https://img.shields.io/github/release/aktezed/urloot.svg"></a>
@@ -16,25 +16,22 @@
 </p>
 
 <p align="center">
-  <a href="#what-it-does">What it does</a> •
+  <a href="#why-urloot">Why urloot</a> •
   <a href="#installation">Installation</a> •
   <a href="#usage">Usage</a> •
   <a href="#cli-flags">CLI flags</a> •
   <a href="#license">License</a>
 </p>
 
-`urloot` collects historical and live URLs for web targets, collapses noisy variations into distinct endpoints, and stores each scan in a local SQLite database so you can see what changed on later runs.
+`urloot` gathers endpoints and query parameters for web recon and bug bounty testing, removes duplicate noise, and saves results to SQLite so repeat scans only show new attack surface.
 
-It is built for web recon and bug bounty triage as the endpoint companion to [assfin](https://github.com/aktezed/assfin), replacing shell chains like `katana | gau | uro` with a single Go binary that needs no CGO or Python runtime.
+## Why urloot
 
-## What it does
-
-A scan accepts a single domain (`-d example.com`), a list file (`-l hosts.txt`), or targets piped on `STDIN`. By default, `urloot` keeps URLs under the target's eTLD+1 root domain; use `-scope` or `-exclude` to tighten or block specific hosts and path prefixes.
-
-1. Passive archive harvesting (`pkg/archive`): queries Wayback Machine, Common Crawl, AlienVault OTX, and URLScan.io concurrently under per-provider rate limits. If one archive times out or returns HTTP 429 or 5xx, `urloot` logs a warning and continues with the remaining sources.
-2. Active crawling (`pkg/crawler`): spiders live seed URLs for links, HTML forms and inputs, `<script src>` JavaScript files, inline scripts, `robots.txt`, and `sitemap.xml`, backing off per host when it hits HTTP 429 or 403 responses.
-3. Normalization and noise filtering (`pkg/normalizer`): strips static assets (images, fonts, stylesheets, media, source maps), rejects malformed or concatenated archive strings, and drops marketing query parameters such as `utm_*`, `fbclid`, `gclid`, and `_ga`. Dynamic path segments collapse into tokens (`/api/v1/users/1042` becomes `/api/v1/users/{int}`), and query parameter values are classified as `int`, `float`, `bool`, `uuid`, `date`, `hash`, `url_or_path`, `str`, or `empty`. On dispatch parameters (`action`, `cmd`, `mode`, `type`, `view`), up to 3 distinct literal verbs are kept per route.
-4. SQLite storage and diffing (`pkg/store`): saves `scans`, `endpoint_paths`, `urls`, and `params` to `<domain>.db` (or `urloot.db` for multi-root scans; pass `-no-db` to run in memory only). Re-running against the same database marks newly seen routes and parameters with `is_new`, and `query` mode lets you filter stored results offline without hitting any target again.
+- One static Go binary that replaces `katana | gau | uro` pipelines with no Python runtime or CGO dependencies.
+- Turns thousands of raw URLs into unique routes by stripping static files, tracking parameters, and duplicate IDs or pagination.
+- Flags high-value parameters (`url_or_path`, `uuid`, `int`, `hash`) so SSRF, open redirect, and IDOR targets are easy to pull out.
+- Stores scan history in SQLite so `--new-only` outputs only endpoints discovered since your last run, and `query` lets you filter past scans offline.
+- Companion to [assfin](https://github.com/aktezed/assfin) for moving from live hosts straight to endpoint triage.
 
 ## Installation
 
@@ -42,7 +39,7 @@ A scan accepts a single domain (`-d example.com`), a list file (`-l hosts.txt`),
 go install github.com/aktezed/urloot@latest
 ```
 
-Or build from source into `bin/urloot`:
+Or build from source:
 
 ```bash
 git clone https://github.com/aktezed/urloot.git
@@ -52,47 +49,32 @@ make build
 
 ## Usage
 
-### Run a full scan on a domain
+Scan a domain (saves to `example.com.db` and prints a summary table):
 
 ```bash
 urloot -d example.com
 ```
 
-This queries all passive archives and spiders live pages at depth 3, saves deduplicated endpoints to `example.com.db`, and prints a terminal dossier showing totals, source provenance, per-host distribution, `url_or_path` parameter candidates, and the top 100 routes. When stdout is piped, `urloot` automatically switches from `table` to `list` (one URL per line); pass `-o json` for newline-delimited JSON.
-
-### Cap noisy subdomains in passive mode
+Cap noisy subdomains in passive mode:
 
 ```bash
 urloot -d example.com -no-active -max-per-host 50
 ```
 
-Passive archives are often dominated by one promotional or helpdesk hostname. `-max-per-host` caps how many deduplicated endpoints are kept per host during a scan, and the end-of-run host distribution shows whether one hostname carried the results.
-
-### Pipe alive hosts from `assfin` into `urloot` and `nuclei`
+Pipe live hosts from `assfin` and send only newly discovered URLs to `nuclei`:
 
 ```bash
 assfin -d example.com -alive -o list -s | urloot -db example-urls.db --new-only -o list -s | nuclei
 ```
 
-Running with `--new-only -s` suppresses the banner and progress logs and outputs only endpoints first discovered in that scan, keeping downstream scanners focused on new surface.
-
-### Query saved endpoints offline
+Query a previous scan offline for new endpoints or SSRF/redirect parameters:
 
 ```bash
 urloot query -db example.com.db --new-only -o list
-```
-
-Query mode reads the SQLite file without making network requests. You can also filter by `-host`, `-path`, `-source`, `-ext`, or `-status`.
-
-### Find high-interest parameters for SSRF, LFI, or open redirect testing
-
-```bash
 urloot query -db example.com.db -param-type url_or_path -o list
 ```
 
-Combine `-has-params`, `-param`, and `-param-type` (`int`, `uuid`, `hash`, `url_or_path`, `str`) to pull specific parameter patterns out of a previous scan.
-
-### Run custom read-only SQL
+Run custom read-only SQL against saved scans:
 
 ```bash
 urloot query -db example.com.db -sql "SELECT host, endpoint_path, param_name, sample_value FROM params WHERE value_type = 'uuid'"
