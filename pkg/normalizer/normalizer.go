@@ -13,7 +13,11 @@ import (
 	"golang.org/x/net/publicsuffix"
 )
 
-const maxDispatchLiteralsPerRoute = 3
+const (
+	maxDispatchLiteralsPerRoute = 3
+	maxURLLength                = 2048
+	maxParamNameLength          = 128
+)
 
 // Config configures the Normalizer and Deduplicator behavior.
 type Config struct {
@@ -23,6 +27,7 @@ type Config struct {
 	KeepExt      []string
 	ScopeRoot    string
 	Exclude      []string
+	MaxPerHost   int
 }
 
 // Normalizer performs stateless and stateful URL normalization and deduplication.
@@ -33,6 +38,7 @@ type Normalizer struct {
 	mu           sync.Mutex
 	rootCache    map[string]string
 	seenURLs     map[string]*types.NormalizedURL
+	hostCounts   map[string]int
 	dispatchSeen map[string]map[string]struct{}
 }
 
@@ -59,6 +65,7 @@ func New(cfg Config) *Normalizer {
 		blacklistExt: bl,
 		rootCache:    make(map[string]string, 64),
 		seenURLs:     make(map[string]*types.NormalizedURL, 1024),
+		hostCounts:   make(map[string]int, 64),
 		dispatchSeen: make(map[string]map[string]struct{}, 128),
 	}
 }
@@ -67,20 +74,30 @@ func New(cfg Config) *Normalizer {
 // It does not deduplicate across previous calls; use Process() for stateful deduplication.
 func (n *Normalizer) Normalize(raw types.RawURL) (*types.NormalizedURL, bool) {
 	rawStr := strings.TrimSpace(raw.URL)
-	if rawStr == "" {
+	if rawStr == "" || len(rawStr) > maxURLLength || hasSpaceOrControl(rawStr) {
 		return nil, false
 	}
 
-	// Ignore non-HTTP schemes early
+	// Ignore non-HTTP schemes and glued multi-URL archive records early.
 	lowerRaw := strings.ToLower(rawStr)
-	if strings.HasPrefix(lowerRaw, "javascript:") ||
-		strings.HasPrefix(lowerRaw, "data:") ||
-		strings.HasPrefix(lowerRaw, "mailto:") ||
-		strings.HasPrefix(lowerRaw, "tel:") {
-		return nil, false
+	for _, bad := range []string{"javascript:", "data:", "mailto:", "tel:", "ftp:", "file:", "blob:", "about:"} {
+		if strings.HasPrefix(lowerRaw, bad) {
+			return nil, false
+		}
 	}
 	if !strings.HasPrefix(lowerRaw, "http://") && !strings.HasPrefix(lowerRaw, "https://") {
-		rawStr = "https://" + strings.TrimPrefix(rawStr, "//")
+		if strings.HasPrefix(lowerRaw, "http:") || strings.HasPrefix(lowerRaw, "https:") {
+			return nil, false
+		}
+		trimmed := strings.TrimPrefix(rawStr, "//")
+		rawStr = "https://" + trimmed
+		lowerRaw = "https://" + strings.ToLower(trimmed)
+	}
+	// Reject second http(s) tokens in host/path while preserving URLs inside query values (e.g. ?redirect=https://...).
+	afterScheme := strings.TrimPrefix(strings.TrimPrefix(lowerRaw, "https://"), "http://")
+	beforeQuery, _, _ := strings.Cut(afterScheme, "?")
+	if strings.Contains(beforeQuery, "http:/") || strings.Contains(beforeQuery, "https:/") {
+		return nil, false
 	}
 
 	u, err := url.Parse(rawStr)
@@ -97,7 +114,7 @@ func (n *Normalizer) Normalize(raw types.RawURL) (*types.NormalizedURL, bool) {
 	host := strings.ToLower(u.Hostname())
 	host = strings.TrimPrefix(host, "*.")
 	host = strings.TrimSuffix(host, ".")
-	if host == "" {
+	if host == "" || strings.ContainsAny(host, "*\\/@\"'<>` ") {
 		return nil, false
 	}
 	port := u.Port()
@@ -177,6 +194,13 @@ func (n *Normalizer) Normalize(raw types.RawURL) (*types.NormalizedURL, bool) {
 					continue
 				}
 				lowerKey := strings.ToLower(normKey)
+				if len(normKey) > maxParamNameLength ||
+					hasSpaceOrControl(normKey) ||
+					strings.Contains(lowerKey, "http:/") ||
+					strings.Contains(lowerKey, "https:/") ||
+					strings.ContainsAny(normKey, "*\\/<>\"'") {
+					return nil, false
+				}
 				firstVal := ""
 				if len(vals) > 0 {
 					firstVal = vals[0]
@@ -293,6 +317,11 @@ func (n *Normalizer) Process(raw types.RawURL) (*types.NormalizedURL, bool) {
 		return existing, false
 	}
 
+	if n.cfg.MaxPerHost > 0 && n.hostCounts[norm.Host] >= n.cfg.MaxPerHost {
+		return nil, false
+	}
+
+	n.hostCounts[norm.Host]++
 	n.seenURLs[norm.URLHash] = norm
 	return norm, true
 }
@@ -379,6 +408,15 @@ func (n *Normalizer) inScope(host, root, urlPath string) bool {
 		}
 	}
 	return true
+}
+
+func hasSpaceOrControl(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] <= 0x20 || s[i] == 0x7f {
+			return true
+		}
+	}
+	return false
 }
 
 // hashHex64 computes a 64-bit FNV-1a hex digest without fmt reflection overhead.

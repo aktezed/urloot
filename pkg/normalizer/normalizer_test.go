@@ -1,6 +1,7 @@
 package normalizer
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/aktezed/urloot/pkg/types"
@@ -95,5 +96,60 @@ func TestNormalizeAndDeduplicate(t *testing.T) {
 	}
 	if uSSRF.ParamTypes["redirect"] != "url_or_path" {
 		t.Fatalf("expected redirect param type 'url_or_path', got %q", uSSRF.ParamTypes["redirect"])
+	}
+}
+
+func TestRejectGluedAndMalformedURLs(t *testing.T) {
+	n := New(Config{ScopeRoot: "example.com"})
+
+	badURLs := []string{
+		"https://example.com/bg/bgr/123/abc/*.taboola.com https:/pagead2.googlesyndication.com https://other.com",
+		"https://example.com/path/https://evil.com/a",
+		"https://example.com/path/https:/evil.com",
+		"https://example.com/search?q=1&https://evil.com/x=2",
+		"https://example.com/search?*.taboola.com=1",
+		"https:/example.com/login",
+		"https://example.com/api\thttps://other.com",
+		"https://example.com/api?" + strings.Repeat("a=1&", 600),
+	}
+	for _, raw := range badURLs {
+		if got, ok := n.Process(types.RawURL{URL: raw, Source: "wayback"}); ok || got != nil {
+			t.Fatalf("expected malformed/glued URL %q to be rejected, got %+v", raw, got)
+		}
+	}
+
+	// Legitimate URL inside query parameter value must still pass.
+	if got, ok := n.Process(types.RawURL{
+		URL:    "https://example.com/api/v2/export?redirect=https://internal.local/dump",
+		Source: "wayback",
+	}); !ok || got == nil {
+		t.Fatal("expected legitimate URL with redirect=https://... parameter value to pass")
+	}
+}
+
+func TestMaxPerHostCap(t *testing.T) {
+	n := New(Config{
+		ScopeRoot:  "example.com",
+		MaxPerHost: 2,
+	})
+
+	if _, ok := n.Process(types.RawURL{URL: "https://promo.example.com/a", Source: "wayback"}); !ok {
+		t.Fatal("expected 1st promo route to pass")
+	}
+	if _, ok := n.Process(types.RawURL{URL: "https://promo.example.com/b", Source: "wayback"}); !ok {
+		t.Fatal("expected 2nd promo route to pass")
+	}
+	// Duplicate of already-accepted route must still merge provenance.
+	dup, ok := n.Process(types.RawURL{URL: "https://promo.example.com/a", Source: "otx"})
+	if ok || dup == nil || dup.SourcePacked != "otx,wayback" {
+		t.Fatalf("expected duplicate route to merge provenance at cap, got ok=%v dup=%+v", ok, dup)
+	}
+	// 3rd distinct route on promo.example.com must be dropped.
+	if got, ok := n.Process(types.RawURL{URL: "https://promo.example.com/c", Source: "wayback"}); ok || got != nil {
+		t.Fatalf("expected 3rd promo route to be capped, got %+v", got)
+	}
+	// Separate host still gets its own quota.
+	if _, ok := n.Process(types.RawURL{URL: "https://api.example.com/v1/users", Source: "wayback"}); !ok {
+		t.Fatal("expected separate host api.example.com to pass")
 	}
 }

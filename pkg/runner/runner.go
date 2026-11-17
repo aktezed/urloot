@@ -135,6 +135,7 @@ func (r *Runner) ExecuteScan(ctx context.Context) error {
 		KeepExt:      r.options.KeepExt,
 		ScopeRoot:    scopeRoot,
 		Exclude:      r.options.Exclude,
+		MaxPerHost:   r.options.MaxPerHost,
 	})
 
 	rawChan := make(chan types.RawURL, 1024)
@@ -211,6 +212,10 @@ func (r *Runner) ExecuteScan(ctx context.Context) error {
 	// shortcut: buffers session-unique URLs in memory before 500-row SQLite batch flush, switch to streaming chunk flushes if a single target exceeds 5M unique normalized routes
 	records := norm.Records()
 	newCount := len(records)
+
+	if !r.options.Silent && len(records) > 0 {
+		gologger.Info().Msgf("%s\n", formatHostDistributionLine(records, 5))
+	}
 
 	if r.store != nil {
 		// Persist in batches of 500 records

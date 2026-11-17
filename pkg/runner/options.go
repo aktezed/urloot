@@ -78,6 +78,7 @@ func ParseOptions() *types.Options {
 		flagSet.BoolVar(&opts.KeepStatic, "keep-static", false, "retain static media, font, and stylesheet URLs"),
 		flagSet.StringSliceVar(&opts.BlacklistExt, "blacklist-ext", nil, "additional file extensions to prune", goflags.CommaSeparatedStringSliceOptions),
 		flagSet.StringSliceVar(&opts.KeepExt, "keep-ext", nil, "file extensions to exempt from pruning", goflags.CommaSeparatedStringSliceOptions),
+		flagSet.IntVar(&opts.MaxPerHost, "max-per-host", 0, "maximum deduplicated endpoints to keep per host (0 = unlimited)"),
 	)
 
 	// Storage & Query
@@ -163,6 +164,10 @@ func validateOptions(opts *types.Options) error {
 			opts.DBPath = "urloot.db"
 		}
 		return nil
+	}
+
+	if opts.MaxPerHost < 0 {
+		return errors.New("invalid -max-per-host: must be >= 0")
 	}
 
 	if opts.NoPassive && opts.NoActive {

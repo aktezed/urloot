@@ -37,6 +37,7 @@ type Options struct {
 	KeepStatic   bool                `json:"keep_static,omitempty"`
 	BlacklistExt goflags.StringSlice `json:"blacklist_ext,omitempty"`
 	KeepExt      goflags.StringSlice `json:"keep_ext,omitempty"`
+	MaxPerHost   int                 `json:"max_per_host,omitempty"`
 
 	// Storage & Query (SQLite)
 	DBPath    string              `json:"db_path,omitempty"`

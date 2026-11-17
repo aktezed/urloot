@@ -154,3 +154,64 @@ func TestRunnerEndToEndScanAndQueryDiff(t *testing.T) {
 		t.Fatalf("unexpected dossier table output:\n%s", outTable.String())
 	}
 }
+
+func TestMaxPerHostAndHostDistribution(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cdx/search/cdx", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `[
+			["original","statuscode","mimetype"],
+			["https://promo.example.com/bg/bgr/123/*.taboola.com https:/pagead2.googlesyndication.com","200","text/html"],
+			["https://promo.example.com/alpha","200","text/html"],
+			["https://promo.example.com/beta","200","text/html"],
+			["https://promo.example.com/gamma","200","text/html"],
+			["https://promo.example.com/delta","200","text/html"],
+			["https://api.example.com/v1/health","200","application/json"]
+		]`)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	dbPath := filepath.Join(t.TempDir(), "capped.db")
+	opts := &types.Options{
+		Command:      "scan",
+		Targets:      []string{"example.com"},
+		Scope:        "example.com",
+		NoActive:     true,
+		MaxPerHost:   2,
+		DBPath:       dbPath,
+		OutputFormat: "table",
+		Silent:       true,
+	}
+	r, err := NewRunner(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.SetHarvester(archive.NewHarvester(archive.Config{
+		Providers:        []string{"wayback"},
+		Timeout:          3 * time.Second,
+		BaseURLOverrides: map[string]string{"wayback": srv.URL},
+	}))
+	var out bytes.Buffer
+	r.SetOutput(&out)
+
+	if err := r.Run(t.Context()); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	_ = r.Close()
+
+	table := out.String()
+	if strings.Contains(table, "taboola") || strings.Contains(table, "googlesyndication") {
+		t.Fatalf("glued archive string leaked into output:\n%s", table)
+	}
+	if !strings.Contains(table, "HOST DISTRIBUTION:") {
+		t.Fatalf("expected HOST DISTRIBUTION in table output:\n%s", table)
+	}
+	if !strings.Contains(table, "promo.example.com") || !strings.Contains(table, "2 (66.7%)") {
+		t.Fatalf("expected capped promo.example.com count (2 / 66.7%%) in host distribution:\n%s", table)
+	}
+	if !strings.Contains(table, "api.example.com") || !strings.Contains(table, "1 (33.3%)") {
+		t.Fatalf("expected api.example.com count (1 / 33.3%%) in host distribution:\n%s", table)
+	}
+}

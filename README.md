@@ -128,6 +128,7 @@ NORMALIZER (URO ENGINE):
    -keep-static             retain static media, font, and stylesheet URLs
    -blacklist-ext string[]  additional file extensions to prune
    -keep-ext string[]       file extensions to exempt from pruning
+   -max-per-host int        maximum deduplicated endpoints to keep per host (0 = unlimited)
 
 STORAGE & QUERY (SQLITE):
    -db string               SQLite database path (default: <domain>.db or urloot.db)

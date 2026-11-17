@@ -3,7 +3,7 @@ package runner
 import "github.com/projectdiscovery/gologger"
 
 // Version is the current release version of urloot.
-const Version = "v0.1.0"
+const Version = "v0.1.1"
 
 const banner = `
                __            __ 
