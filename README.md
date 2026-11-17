@@ -6,7 +6,7 @@
   <br>
 </h1>
 
-<h4 align="center">Passive & active URL harvester, heuristic normalizer, and SQLite endpoint differ</h4>
+<h4 align="center">Passive and active URL harvester, normalizer, and SQLite endpoint differ</h4>
 
 <p align="center">
 <a href="https://github.com/aktezed/urloot/releases"><img src="https://img.shields.io/github/release/aktezed/urloot.svg"></a>
@@ -16,39 +16,25 @@
 </p>
 
 <p align="center">
-  <a href="#features">Features</a> •
+  <a href="#what-it-does">What it does</a> •
   <a href="#installation">Installation</a> •
-  <a href="#usage-examples">Usage</a> •
-  <a href="#cli-flags">CLI Flags</a> •
+  <a href="#usage">Usage</a> •
+  <a href="#cli-flags">CLI flags</a> •
   <a href="#license">License</a>
 </p>
 
----
+`urloot` collects historical and live URLs for web targets, collapses noisy variations into distinct endpoints, and stores each scan in a local SQLite database so you can see what changed on later runs.
 
-**urloot** (URL + Loot) is a standalone Go CLI tool and SDK for passive archive harvesting, active web crawling, heuristic URL normalization, and persistent SQLite endpoint diffing.
+It is built for web recon and bug bounty triage as the endpoint companion to [assfin](https://github.com/aktezed/assfin), replacing shell chains like `katana | gau | uro` with a single Go binary that needs no CGO or Python runtime.
 
-Built as the endpoint-level companion to [assfin](https://github.com/aktezed/assfin), `urloot` replaces fragile shell pipelines (`katana | gau | uro`) and Python runtime dependencies with a single CGO-free binary that tracks newly surfaced routes and query parameters across time.
+## What it does
 
----
+A scan accepts a single domain (`-d example.com`), a list file (`-l hosts.txt`), or targets piped on `STDIN`. By default, `urloot` keeps URLs under the target's eTLD+1 root domain; use `-scope` or `-exclude` to tighten or block specific hosts and path prefixes.
 
-## Features
-
-1. **Multi-Mode Target Ingestion**:
-   - Single domain (`-d example.com`), target list file (`-l hosts.txt`), or standard UNIX `STDIN` piping (`cat hosts.txt | urloot`).
-2. **Passive Archive Harvester (`pkg/archive`)**:
-   - Queries Wayback Machine, Common Crawl, AlienVault OTX, and URLScan.io concurrently.
-   - Enforces per-provider token-bucket rate limits and isolates individual provider timeouts or HTTP 429/5xx errors without aborting the scan.
-3. **Active Spidering Engine (`pkg/crawler`)**:
-   - Crawls live web targets with configurable concurrency (`-c 10`), global rate limit (`-rate 30`), timeout (`-timeout 10`), and depth (`-depth 3`).
-   - Extracts endpoints from HTML links, `<form>` actions and input fields, `<script src>` JavaScript bundles, inline scripts, `robots.txt`, and `sitemap.xml`.
-   - Enforces eTLD+1 scope boundaries and applies adaptive per-host backoff when encountering HTTP 429 or 403 WAF responses.
-4. **Native Go Normalizer and Deduplicator (`pkg/normalizer`)**:
-   - Prunes static assets (`.png`, `.jpg`, `.svg`, `.woff2`, `.css`, `.mp4`, `.pdf`, `.zip`, `.map`) and static theme/upload prefixes.
-   - Strips marketing and analytics tracking parameters (`utm_*`, `fbclid`, `gclid`, `msclkid`, `_ga`, `_gl`, `mc_cid`).
-   - Tokenizes dynamic REST path segments (`/api/v1/users/1042` becomes `/api/v1/users/{int}`) and query parameter value classes (`?page=1` and `?page=2` collapse into `page=<int>`), while preserving up to 3 distinct literal verbs on dispatch parameters (`action`, `cmd`, `mode`, `type`, `view`).
-5. **SQLite Endpoint Diffing (`pkg/store`)**:
-   - Pure-Go embedded SQLite (`modernc.org/sqlite`) in WAL mode storing `scans`, `endpoint_paths`, `urls`, and `params`.
-   - Tracks `first_seen`, `last_seen`, and `is_new` deltas across scans so operators can query only newly discovered attack surface (`urloot query -db target.db --new-only`).
+1. Passive archive harvesting (`pkg/archive`): queries Wayback Machine, Common Crawl, AlienVault OTX, and URLScan.io concurrently under per-provider rate limits. If one archive times out or returns HTTP 429 or 5xx, `urloot` logs a warning and continues with the remaining sources.
+2. Active crawling (`pkg/crawler`): spiders live seed URLs for links, HTML forms and inputs, `<script src>` JavaScript files, inline scripts, `robots.txt`, and `sitemap.xml`, backing off per host when it hits HTTP 429 or 403 responses.
+3. Normalization and noise filtering (`pkg/normalizer`): strips static assets (images, fonts, stylesheets, media, source maps), rejects malformed or concatenated archive strings, and drops marketing query parameters such as `utm_*`, `fbclid`, `gclid`, and `_ga`. Dynamic path segments collapse into tokens (`/api/v1/users/1042` becomes `/api/v1/users/{int}`), and query parameter values are classified as `int`, `float`, `bool`, `uuid`, `date`, `hash`, `url_or_path`, `str`, or `empty`. On dispatch parameters (`action`, `cmd`, `mode`, `type`, `view`), up to 3 distinct literal verbs are kept per route.
+4. SQLite storage and diffing (`pkg/store`): saves `scans`, `endpoint_paths`, `urls`, and `params` to `<domain>.db` (or `urloot.db` for multi-root scans; pass `-no-db` to run in memory only). Re-running against the same database marks newly seen routes and parameters with `is_new`, and `query` mode lets you filter stored results offline without hitting any target again.
 
 ## Installation
 
@@ -56,7 +42,7 @@ Built as the endpoint-level companion to [assfin](https://github.com/aktezed/ass
 go install github.com/aktezed/urloot@latest
 ```
 
-Or build from source:
+Or build from source into `bin/urloot`:
 
 ```bash
 git clone https://github.com/aktezed/urloot.git
@@ -64,39 +50,55 @@ cd urloot
 make build
 ```
 
-## Usage Examples
+## Usage
 
-### 1. Harvest and Spider a Single Domain
+### Run a full scan on a domain
 
 ```bash
 urloot -d example.com
 ```
 
-### 2. Pipe Alive Hosts from `assfin` into `urloot` and `nuclei`
+This queries all passive archives and spiders live pages at depth 3, saves deduplicated endpoints to `example.com.db`, and prints a terminal dossier showing totals, source provenance, per-host distribution, `url_or_path` parameter candidates, and the top 100 routes. When stdout is piped, `urloot` automatically switches from `table` to `list` (one URL per line); pass `-o json` for newline-delimited JSON.
+
+### Cap noisy subdomains in passive mode
+
+```bash
+urloot -d example.com -no-active -max-per-host 50
+```
+
+Passive archives are often dominated by one promotional or helpdesk hostname. `-max-per-host` caps how many deduplicated endpoints are kept per host during a scan, and the end-of-run host distribution shows whether one hostname carried the results.
+
+### Pipe alive hosts from `assfin` into `urloot` and `nuclei`
 
 ```bash
 assfin -d example.com -alive -o list -s | urloot -db example-urls.db --new-only -o list -s | nuclei
 ```
 
-### 3. Query Newly Discovered Endpoints from SQLite
+Running with `--new-only -s` suppresses the banner and progress logs and outputs only endpoints first discovered in that scan, keeping downstream scanners focused on new surface.
+
+### Query saved endpoints offline
 
 ```bash
 urloot query -db example.com.db --new-only -o list
 ```
 
-### 4. Filter Endpoints by Parameter Value Class (SSRF / Open Redirect Triage)
+Query mode reads the SQLite file without making network requests. You can also filter by `-host`, `-path`, `-source`, `-ext`, or `-status`.
+
+### Find high-interest parameters for SSRF, LFI, or open redirect testing
 
 ```bash
 urloot query -db example.com.db -param-type url_or_path -o list
 ```
 
-### 5. Run Custom Read-Only SQL Queries
+Combine `-has-params`, `-param`, and `-param-type` (`int`, `uuid`, `hash`, `url_or_path`, `str`) to pull specific parameter patterns out of a previous scan.
+
+### Run custom read-only SQL
 
 ```bash
 urloot query -db example.com.db -sql "SELECT host, endpoint_path, param_name, sample_value FROM params WHERE value_type = 'uuid'"
 ```
 
-## CLI Flags
+## CLI flags
 
 ```text
 INPUT:
@@ -155,4 +157,4 @@ OUTPUT & GENERAL:
 
 ## License
 
-MIT
+Released under the [MIT License](LICENSE).
